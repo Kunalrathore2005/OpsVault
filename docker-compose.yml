@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: opsvault
+      POSTGRES_USER: opsvault
+      POSTGRES_PASSWORD: change-me-in-production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsvault -d opsvault"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://opsvault:change-me-in-production@postgres:5432/opsvault
+      SECRET_KEY: replace-with-a-long-random-production-secret
+      FRONTEND_ORIGINS: http://localhost:5173
+      UPLOAD_DIR: /app/uploads
+      BOOTSTRAP_ADMIN_EMAIL: admin@opsvault.local
+      BOOTSTRAP_ADMIN_PASSWORD: OpsVaultAdmin!2026
+      BOOTSTRAP_ADMIN_NAME: Kunal
+      DEV_SEED_USERS: "true"
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes: ["uploads:/app/uploads"]
+  worker:
+    build: ./backend
+    command: celery -A app.celery_app.celery worker --loglevel=INFO
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgresql+psycopg://opsvault:change-me-in-production@postgres:5432/opsvault
+      SECRET_KEY: replace-with-a-long-random-production-secret
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_DEV_TEST_USERS: "true"
+    ports: ["5173:80"]
+    depends_on:
+      backend:
+        condition: service_healthy
+volumes:
+  postgres_data:
+  uploads:
+
